@@ -1,0 +1,8 @@
+# Ignore build junk
+*.o
+
+# Ignore the binaray
+rft-client
+
+# Ignore the test files
+*.mb
