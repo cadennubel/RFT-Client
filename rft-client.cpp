@@ -1,6 +1,3 @@
-//
-// Created by Phillip Romig on 7/16/24.
-//
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -9,24 +6,119 @@
 #include <unistd.h>
 #include <array>
 #include <cstring>
+#include <chrono>
 
 #include "timerC.h"
 #include "unreliableTransport.h"
 #include "logging.h"
 
 
-#define WINDOW_SIZE 10
-int main(int argc, char* argv[]) {
+//get file size 
 
-    // Defaults
-    uint16_t portNum = 12345;
+std::ifstream::pos_type filesize(const char* filename) {
+    std::ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
+    return in.tellg();
+}
+
+//make packet.
+datagramS make_pkt(uint32_t seqnum, std::istream& input) {
+    datagramS pkt{};      
+    pkt.seqNum = seqnum;  
+    pkt.ackNum = 0;
+    int count = 0;
+    char byte;
+    while (count < MAX_PAYLOAD_LENGTH && input.get(byte)) {
+        pkt.data[count] = byte;
+        count++;
+    }
+    pkt.payloadLength = count;
+    pkt.checksum = computeChecksum(pkt);
+    return pkt;
+}
+enum class State { WAIT, TIMEOUT, SENDDATA, GOODPCKRCV, CORRUPTPCKT };
+
+void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WINDOW_SIZE, int TIMEOUT_SIZE){
+    uint32_t base = 1;
+    uint32_t nextseqnum = 1;
+    std::array<datagramS, 10> sndpkt;
+    timerC t(TIMEOUT_SIZE);
+    bool done = false;
+
+    while (!done || base != nextseqnum){
+        datagramS rcvpkt;
+
+        //finite state machine
+        State state = State::WAIT;
+
+        bool rcvd = connection.udt_receive(rcvpkt) > 0;
+
+        if (rcvd && validateChecksum(rcvpkt)){
+            state = State::GOODPCKRCV;
+        }
+        else if (rcvd && !validateChecksum(rcvpkt)){
+            state = State::CORRUPTPCKT;
+        }
+        else if (t.timeout()){
+            state = State::TIMEOUT;
+        }
+        else if (!done){
+            state = State::SENDDATA;
+        }
+
+        switch (state){
+        case State::WAIT:
+            break;
+
+        case State::TIMEOUT:
+            t.start();
+            for(uint32_t i = base; i <= nextseqnum - 1; i++){
+                connection.udt_send(sndpkt[i % 10]);
+            }
+            break;
+
+        case State::GOODPCKRCV:
+            if (rcvpkt.ackNum >= base && rcvpkt.ackNum < nextseqnum) {
+                base = rcvpkt.ackNum + 1;
+                if (base == nextseqnum) t.stop();
+                else t.start();
+            }
+            break;
+
+        case State::CORRUPTPCKT:
+            break;
+
+        case State::SENDDATA:
+            if (nextseqnum < base + WINDOW_SIZE){
+                sndpkt[nextseqnum % 10] = make_pkt(nextseqnum, input);
+                connection.udt_send(sndpkt[nextseqnum % 10]);
+                if (base == nextseqnum){
+                    t.start();
+                }
+                
+                //check logic
+                if (sndpkt[nextseqnum % 10].payloadLength == 0){
+                    done = true;
+                }
+                nextseqnum++;
+            }
+            break;
+        }
+    }
+}
+
+int main(int argc, char* argv[]){
+   
+    uint16_t portNum = 12566;
     std::string hostname = "isengard.mines.edu";
     std::string inputFilename = "";
-
+    uint32_t WINDOW_SIZE = 10;
+    int TIMEOUT_SIZE = 50;
+    using namespace std::chrono;
+   
     int opt;
     try {
         int signedTemp;
-        while ((opt = getopt(argc, argv, "f:h:p:d:")) != -1) {
+        while ((opt = getopt(argc, argv, "f:h:p:d:w:t:")) != -1) {
             switch (opt) {
                 case 'p':
                     signedTemp = std::stoi(optarg);
@@ -51,6 +143,20 @@ int main(int argc, char* argv[]) {
                 case 'f':
                     inputFilename = optarg;
                     break;
+                case 'w':
+                    WINDOW_SIZE = std::stoi(optarg);
+                    if(WINDOW_SIZE < 1 || WINDOW_SIZE > 10){
+                        std::cerr << "Window size must be greater than 1 and less than 10" << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                    break;
+                case 't':
+                    TIMEOUT_SIZE = std::stoi(optarg);
+                    if (TIMEOUT_SIZE < 10 || TIMEOUT_SIZE > 100) {
+                        std::cerr << "Timeout size must be greater than 10 and less than 100." << std::endl;
+                        exit(EXIT_FAILURE);
+                    }
+                    break;
                 case '?':
                 default:
                     std::cout << "Usage: " << argv[0] << " -f filename [-h hostname] [-p port] [-d debug_level]" << std::endl;
@@ -73,39 +179,37 @@ int main(int argc, char* argv[]) {
     TRACE << "\tDebug Level: " << LOG_LEVEL << ENDL;
     TRACE << "\tOutput file name: " << inputFilename << ENDL;
 
-
     // **************************************************
-    // Open the input file.
+    // Use fstream binary to open file.
     // **************************************************
 
-
+    std::ifstream openfile;
+    openfile.open(inputFilename, std::ios::binary);
+    if (!openfile.is_open()) {
+        FATAL << "Unable to open input file: " << inputFilename << ENDL;
+        exit(EXIT_FAILURE);
+    }
+    //catch the exception and call GBN send
+     //start the clock using chrono
+    time_point<steady_clock> start = steady_clock::now();
     try {
-
-       // *******************************************************************
-       // * Initialize your timer, datagram buffer, transport layer etc.
-       // *******************************************************************
-       bool finished(false);
-        while (!finished) {
-            
-            // ***********************************************************************
-            // * Is there space in the window? If so, read data from file and send it
-            // ***********************************************************************
-        
-            // ***********************************************************************
-            // * Are there acknowledgments in from the server. If so, process them.
-            // ***********************************************************************
-            
-            // ***********************************************************************
-            // * Have we has the timer gone off?
-            // ***********************************************************************
- 
-        }
-
-        
+        unreliableTransportC connection(hostname, portNum);
+        gbnSend(connection, openfile, WINDOW_SIZE, TIMEOUT_SIZE);
     } catch (std::exception &e) {
-        FATAL<< "Error: " << e.what() << ENDL;
-        exit(1);
+        FATAL << "Transfer failed hit exception: " << e.what() << ENDL;
+        exit(EXIT_FAILURE);
     }
 
+    openfile.close();
+    //end clock and return 0
+    time_point<steady_clock> end = steady_clock::now();
+    auto elapsed = duration_cast<milliseconds>(end - start);
+    TRACE << "File transfer complete." << ENDL;
+    //get throughput
+    double seconds = elapsed.count() / 1000.0;
+    std::streamoff fileSize = filesize(inputFilename.c_str());
+    double throughput = fileSize / seconds;
+    std::cout << "Elapsed Time: " << elapsed.count() << " ms" << std::endl;
+    std::cout << "Throughput: " << throughput << " bytes/s" << std::endl;
     return 0;
 }
