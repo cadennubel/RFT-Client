@@ -77,8 +77,8 @@ void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WIN
             break;
 
         case State::GOODPCKRCV:
-            if (rcvpkt.ackNum >= base && rcvpkt.ackNum < nextseqnum) {
-                base = rcvpkt.ackNum + 1;
+            if (rcvpkt.ackNum > base && rcvpkt.ackNum <= nextseqnum) {
+                base = rcvpkt.ackNum;
                 if (base == nextseqnum) t.stop();
                 else t.start();
             }
