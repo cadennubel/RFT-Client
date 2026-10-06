@@ -77,8 +77,8 @@ void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WIN
             break;
 
         case State::GOODPCKRCV:
-            if (rcvpkt.ackNum > base && rcvpkt.ackNum <= nextseqnum) {
-                base = rcvpkt.ackNum;
+            if (rcvpkt.ackNum >= base && rcvpkt.ackNum < nextseqnum) {
+                base = rcvpkt.ackNum + 1;
                 if (base == nextseqnum) t.stop();
                 else t.start();
             }
@@ -112,7 +112,7 @@ int main(int argc, char* argv[]){
     std::string hostname = "isengard.mines.edu";
     std::string inputFilename = "";
     uint32_t WINDOW_SIZE = 10;
-    int TIMEOUT_SIZE = 50;
+    int TIMEOUT_SIZE = 250;
     using namespace std::chrono;
    
     int opt;
@@ -152,8 +152,8 @@ int main(int argc, char* argv[]){
                     break;
                 case 't':
                     TIMEOUT_SIZE = std::stoi(optarg);
-                    if (TIMEOUT_SIZE < 10 || TIMEOUT_SIZE > 100) {
-                        std::cerr << "Timeout size must be greater than 10 and less than 100." << std::endl;
+                    if (TIMEOUT_SIZE < 10 || TIMEOUT_SIZE > 2000) {
+                        std::cerr << "Timeout must be between 10 and 2000 ms." << std::endl;
                         exit(EXIT_FAILURE);
                     }
                     break;
