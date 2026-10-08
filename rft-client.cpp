@@ -43,6 +43,7 @@ void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WIN
     std::array<datagramS, 10> sndpkt;
     timerC t(TIMEOUT_SIZE);
     bool done = false;
+    int finalRetries = 0;   // timeouts since the end-of-file packet was sent
 
     while (!done || base != nextseqnum){
         datagramS rcvpkt;
@@ -72,6 +73,10 @@ void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WIN
             break;
 
         case State::TIMEOUT:
+            if (done && ++finalRetries > 10) {
+                WARNING << "No ACK after 10 retries; assuming server received EOF and exited." << ENDL;
+                return;
+            }
             INFO << "TIMEOUT: resending packets " << base << " to " << nextseqnum - 1 << ENDL;
             t.start();
             for(uint32_t i = base; i <= nextseqnum - 1; i++){
@@ -83,6 +88,7 @@ void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WIN
         case State::GOODPCKRCV:
             if (rcvpkt.ackNum >= base && rcvpkt.ackNum < nextseqnum) {
                 base = rcvpkt.ackNum + 1;
+                finalRetries = 0;
                 DEBUG << "GOODPCKRCV: ACK " << rcvpkt.ackNum << " accepted, base now " << base
                       << ", nextseqnum " << nextseqnum << ENDL;
                 if (base == nextseqnum) {
