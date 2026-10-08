@@ -67,11 +67,15 @@ void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WIN
 
         switch (state){
         case State::WAIT:
+            // Runs constantly while waiting; only visible at -d 6
+            TRACE << "WAIT: base=" << base << " nextseqnum=" << nextseqnum << ENDL;
             break;
 
         case State::TIMEOUT:
+            INFO << "TIMEOUT: resending packets " << base << " to " << nextseqnum - 1 << ENDL;
             t.start();
             for(uint32_t i = base; i <= nextseqnum - 1; i++){
+                DEBUG << "  Resending seqNum " << i << ENDL;
                 connection.udt_send(sndpkt[i % 10]);
             }
             break;
@@ -79,25 +83,37 @@ void gbnSend(unreliableTransportC& connection, std::istream& input, uint32_t WIN
         case State::GOODPCKRCV:
             if (rcvpkt.ackNum >= base && rcvpkt.ackNum < nextseqnum) {
                 base = rcvpkt.ackNum + 1;
-                if (base == nextseqnum) t.stop();
+                DEBUG << "GOODPCKRCV: ACK " << rcvpkt.ackNum << " accepted, base now " << base
+                      << ", nextseqnum " << nextseqnum << ENDL;
+                if (base == nextseqnum) {
+                    t.stop();
+                    DEBUG << "  All outstanding packets ACKed, timer stopped" << ENDL;
+                }
                 else t.start();
+            } else {
+                DEBUG << "GOODPCKRCV: ACK " << rcvpkt.ackNum << " ignored (window is "
+                      << base << " to " << nextseqnum - 1 << ")" << ENDL;
             }
             break;
 
         case State::CORRUPTPCKT:
+            WARNING << "CORRUPTPCKT: bad checksum on ACK (ackNum field reads "
+                    << rcvpkt.ackNum << "), ignoring" << ENDL;
             break;
 
         case State::SENDDATA:
             if (nextseqnum < base + WINDOW_SIZE){
                 sndpkt[nextseqnum % 10] = make_pkt(nextseqnum, input);
+                DEBUG << "SENDDATA: sending seqNum " << nextseqnum << " ("
+                      << (int)sndpkt[nextseqnum % 10].payloadLength << " bytes)" << ENDL;
                 connection.udt_send(sndpkt[nextseqnum % 10]);
                 if (base == nextseqnum){
                     t.start();
                 }
-                
-                //check logic
+
                 if (sndpkt[nextseqnum % 10].payloadLength == 0){
                     done = true;
+                    INFO << "SENDDATA: end of file, sent empty packet seqNum " << nextseqnum << ENDL;
                 }
                 nextseqnum++;
             }
