@@ -5,7 +5,7 @@
 #  Created by Phillip Romig on 4/3/12.
 #  Copyright 2012 Colorado School of Mines. All rights reserved.
 #
-USERNAME = change-me
+USERNAME = cnubel
 
 CXX = g++
 LD = g++
